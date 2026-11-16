@@ -54,6 +54,15 @@ The project folder `P` must be an ASCII path (e.g. `D:/reels/<name>`): OpenCV ca
   ffmpeg.exe (the wrapper only made audio byte-identical between renders).
 - `.sh` scripts run through Git Bash, not WSL bash.
 
+## Thai text rendering — always
+Vowels and tone marks must never overlap (ซ้ำ, น้ำ, ทั้ง, ปั้น: the tone mark sits ABOVE ำ / ั, not on it).
+- Burning ASS with ffmpeg: use `ass=file.ass:fontsdir=...:shaping=complex`. The plain `subtitles=` filter (and
+  `shaping=simple`) skips Thai mark positioning and stacks ้ on top of ำ. Use complex for snapshots too.
+- ffmpeg `drawtext` has no Thai shaping: don't use it for Thai. PIL only with `layout_engine=ImageFont.Layout.RAQM`
+  (check `features.check('raqm')`); otherwise render the text in HTML/Chrome (HyperFrames), which shapes Thai correctly.
+- Type Thai in logical order (consonant, upper vowel, tone mark, then ำ), never ำ before the tone mark.
+- Before sending a preview, zoom into one frame that has ้/่ with ำ or ั and check the marks.
+
 ## Working with the user
 - Use only the files they name; making many "raw files" out of the source's own frames is fine. Say when a picture
   carries someone else's watermark.

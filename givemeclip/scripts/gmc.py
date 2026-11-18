@@ -3,7 +3,9 @@
 found on the "Claude AI ตัดคลิป" job (2026-11-12) built in. Stdlib only; run with the system python3.
 
     python3 gmc.py doctor [--fix]                 tools, venvs, SFX names; --fix restores the stuck *.wav.tmp.wav SFX
-    python3 gmc.py prep  <source.mp4> <P> [--script สคิป.txt]
+    python3 gmc.py prep  <source.mp4> <P> [--script สคิป.txt] [--exact]  (default: fast batched transcript build/fw.json,
+                                                  split by VAD into build/islands.json (src fw) for cut / islands / reel.py;
+                                                  --exact replaces it with the slow per-island whisper pass)
                                                   ASCII project P (e.g. D:/reels/<name>): hardlink + rawcut_prep + VAD + Thai
                                                   island transcripts (GPU) and facescan running side by side
     python3 gmc.py islands <P>                    the island table (raw seconds + text) to pick takes from
@@ -13,6 +15,8 @@ found on the "Claude AI ตัดคลิป" job (2026-11-12) built in. Stdlib
     python3 gmc.py render <P/reel> <out.mp4> [--speed 1.15] [--bed music.wav --bed-at 7.7 --bed-from 3.2 --bed-db -16]
                                                   [--no-render]   HyperFrames render -> speed -> music bed ducked
                                                   under the voice -> -14 LUFS H.264 delivery -> QA numbers
+    python3 gmc.py thai  <file|dir> ... [--fix]   Thai vowel / tone mark check (order + render method); snap and render
+                                                  run it on P/reel first (auto-fix order, stop on the rest; --force skips)
 Every python child gets PYTHONUTF8=1 (Thai json / cp874), every .sh goes through Git Bash, and HyperFrames gets the real
 ffmpeg.exe (its hf_ffmpeg.sh wrapper cannot be spawned by Node on Windows: "spawn EFTYPE")."""
 import json, os, re, shutil, subprocess, sys, time
@@ -22,6 +26,7 @@ SKILLS = os.path.abspath(os.path.join(HERE, "..", ".."))           # the folder 
 # every path can be set by an environment variable (INSTALL.md); the defaults follow the install guide
 GE = os.environ.get("GMC_GHOST_EDITOR", os.path.join(SKILLS, "ghost-editor")).replace("\\", "/")  # ASCII path!
 WHISPER_PY = os.environ.get("GMC_WHISPER_PY", sys.executable)      # python with torch (+CUDA) + openai-whisper + silero-vad
+FW_PY = os.environ.get("GMC_FW_PY", WHISPER_PY)                    # python with faster-whisper (the default batched transcript)
 MP_PY = os.environ.get("GMC_MEDIAPIPE_PY", sys.executable)         # python with mediapipe + opencv (facescan, face_track)
 PARALLAX = os.environ.get("GMC_PARALLAX", os.path.join(SKILLS, "depth-parallax", "scripts", "parallax.py"))
 BASH = next((b for b in ("C:/Program Files/Git/bin/bash.exe", shutil.which("bash")) if b and os.path.exists(b)), "bash")
@@ -51,6 +56,9 @@ def doctor(fix=False):
                        capture_output=True, text=True) if os.path.exists(WHISPER_PY) else None
     ok(bool(r and r.returncode == 0), "silero-vad + whisper in that venv" + (f" (CUDA {r.stdout.strip()})" if r and r.returncode == 0 else
        "  -> <GMC_WHISPER_PY> -m pip install silero-vad==6.2.3  (INSTALL.md step 3)"))
+    r = subprocess.run([FW_PY, "-c", "import faster_whisper"], capture_output=True) if os.path.exists(FW_PY) else None
+    ok(bool(r and r.returncode == 0), f"faster-whisper in {FW_PY}" + ("" if r and r.returncode == 0 else
+       "  -> <GMC_FW_PY> -m pip install faster-whisper  (INSTALL.md step 3)"))
     r = subprocess.run([MP_PY, "-c", "import mediapipe, cv2"], capture_output=True) if os.path.exists(MP_PY) else None
     ok(bool(r and r.returncode == 0), f"mediapipe python {MP_PY}")
     ok(os.path.exists(PARALLAX), "depth-parallax")
@@ -71,7 +79,7 @@ def doctor(fix=False):
 
 
 # ---------------------------------------------------------------- prep
-def prep(src, P, script=None):
+def prep(src, P, script=None, exact=False):
     need_ascii(P)
     os.makedirs(f"{P}/src", exist_ok=True)
     raw = f"{P}/src/raw.mp4"
@@ -92,14 +100,72 @@ def prep(src, P, script=None):
                               env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not os.path.exists(f"{P}/build/vad.json"):
         sh([WHISPER_PY, f"{GE}/scripts/vad_pauses.py", f"{P}/build/full.wav", "--min-pause", "0.3", "--out", f"{P}/build/vad.json"])
-    if not os.path.exists(f"{P}/build/islands.json"):
+    # default: one fast batched faster-whisper pass over the whole file -> build/fw.json (+ .txt), then split into the
+    # VAD islands -> build/islands.json (src "fw"), which cut / islands / reel.py read as they read the exact one
+    if not os.path.exists(f"{P}/build/fw.json"):
+        sh([FW_PY, os.path.join(os.path.dirname(os.path.abspath(__file__)), "fw_batch.py"), f"{P}/build/a16.wav", f"{P}/build/fw.json"], cwd=P)
+    if exact and islands_src(P) != "exact":
+        if os.path.exists(f"{P}/build/islands.json"):
+            os.remove(f"{P}/build/islands.json")                # the fw-derived one: replace it with the exact pass
         sh([WHISPER_PY, f"{GE}/scripts/islands_tx.py", f"{P}/build/a16.wav", "--vad", f"{P}/build/vad.json", "--lang", "th",
             "--out", f"{P}/build/islands.json"], cwd=P)         # ~17 min for 97 s of Thai speech (fp32 + word timing)
+    ensure_islands(P)
     islands(P)
     if fs:
         print("waiting for facescan ...", flush=True)
         fs.wait()
         print("facescan", "done" if fs.returncode == 0 else f"FAILED ({fs.returncode})")
+
+
+def islands_src(P):
+    """'exact' (islands_tx), 'fw' (made from the batched fw.json) or None"""
+    p = f"{P}/build/islands.json"
+    if not os.path.exists(p):
+        return None
+    d = load_islands(P)
+    return "fw" if d and d[0].get("src") == "fw" else "exact"
+
+
+def fw_to_islands(P):
+    """build/fw.json words (faster-whisper batched) -> one island per silero-VAD island, islands_tx format:
+    [{a, b, text, words: [{w, a, b, p}], src: "fw"}]. A word goes to the island that holds its midpoint, else the nearest."""
+    fw = json.load(open(f"{P}/build/fw.json", encoding="utf-8"))
+    vad = json.load(open(f"{P}/build/vad.json", encoding="utf-8"))["islands"]
+    raw = [{"w": w["word"], "a": w["start"], "b": w["end"], "p": w.get("probability", 1)}
+           for s in fw for w in s.get("words") or []]
+    # batched Thai "words" are token pieces that split syllables (เอ|า, ก|ำ, ใ|ห|ม่): glue a piece that starts with a
+    # following vowel / mark / ๆ onto the one before, and a piece that ends with a leading vowel (เ แ โ ใ ไ) onto the next
+    words = []
+    for w in raw:
+        t = w["w"].strip()
+        if words and t and ("ะ" <= t[0] <= "ฺ" or "ๅ" <= t[0] <= "๎"
+                            or "เ" <= words[-1]["w"][-1:] <= "ไ"):
+            q = words[-1]
+            q["w"] += t; q["b"] = max(q["b"], w["b"]); q["p"] = min(q["p"], w["p"])
+        elif t:
+            words.append({**w, "w": t})
+    if not vad:
+        sys.exit(f"{P}/build/vad.json has no islands")
+    out = [{"a": v["a"], "b": v["b"], "text": "", "words": [], "src": "fw"} for v in vad]
+    j = 0
+    for w in words:
+        m = (w["a"] + w["b"]) / 2
+        while j + 1 < len(out) and out[j + 1]["a"] <= m:      # words are in time order: walk the islands forward
+            j += 1
+        k = j
+        if not (out[j]["a"] <= m <= out[j]["b"]) and j + 1 < len(out) and out[j + 1]["a"] - m < m - out[j]["b"]:
+            k = j + 1
+        out[k]["words"].append(w)
+    out = [x for x in out if x["words"]]
+    for x in out:
+        x["text"] = "".join(w["w"] for w in x["words"]).strip()
+    json.dump(out, open(f"{P}/build/islands.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print(f"islands.json from fw.json: {len(words)} words -> {len(out)} islands (src fw)")
+
+
+def ensure_islands(P):
+    if not os.path.exists(f"{P}/build/islands.json") and os.path.exists(f"{P}/build/fw.json"):
+        fw_to_islands(P)
 
 
 def load_islands(P):
@@ -114,6 +180,8 @@ def load_islands(P):
 
 def islands(P):
     sys.stdout.reconfigure(encoding="utf-8")
+    ensure_islands(P)
+    print(f"islands.json src: {islands_src(P)}")
     for i, x in enumerate(load_islands(P)):
         txt = re.sub(r"(.{1,4}?)\1{5,}", r"\1\1…", x["text"].replace(" ", ""))   # whisper's Thai repeat loops, squeezed
         print(f"{i:3d} {x['a']:8.2f} {x['b']:8.2f} ({x['b'] - x['a']:4.1f}) {txt[:110]}")
@@ -123,6 +191,7 @@ def islands(P):
 def cut(P):
     if not os.path.exists(f"{P}/cut.json"):
         sys.exit(f"write {P}/cut.json first (pieces in raw seconds; references in SKILL.md step 3)")
+    ensure_islands(P)                                          # plan_cut picks up build/islands.json for the word notes
     fs = ["--facescan", f"{P}/build/facescan.json"] if os.path.exists(f"{P}/build/facescan.json") else []
     sh(["python3", f"{GE}/scripts/plan_cut.py", P])
     sh(["python3", f"{GE}/recipes/clean-os/assemble.py", P, "--plan", "build/plan.json", "--alt"])   # ~9.5 min
@@ -154,7 +223,26 @@ def reel(P):
 
 
 # ---------------------------------------------------------------- snapshots
-def snap(R, times):
+def thai(paths, fix=False):
+    """Thai mark check (thai_check.py): typing order + render method; -> findings left"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import thai_check
+    sys.stdout.reconfigure(encoding="utf-8")
+    n = thai_check.check(paths, fix)
+    print(f"thai check: {n} finding(s)" + ("" if n else " - vowels / tone marks OK"))
+    return n
+
+
+def thai_gate(R, force=False):
+    """run before every snap / render: fix the typing order, stop on anything left (unless --force)"""
+    targets = [p for p in (f"{R}/reel.py", f"{R}/index.html", f"{R}/compositions", f"{R}/assets") if os.path.exists(p)]
+    targets += [os.path.join(R, f) for f in os.listdir(R) if f.lower().endswith((".ass", ".srt", ".html", ".py"))]
+    if thai(sorted({os.path.normpath(t) for t in targets}), fix=True) and not force:
+        sys.exit("Thai marks would overlap: fix the lines above (or pass --force), then re-run")
+
+
+def snap(R, times, force=False):
+    thai_gate(R, force)
     out = f"{R}/build/snaps"
     sh([BASH, f"{GE}/scripts/hf.sh", "snapshot", ".", "-o", out, "--keep", "--no-end", "--timeout", "20000", "--at", times], cwd=R)
     ts = [t.strip() for t in times.split(",") if t.strip()]
@@ -168,6 +256,7 @@ def snap(R, times):
         sh([FFMPEG, "-v", "error", "-y", *ins, "-filter_complex", f"{''.join(f'[{i}]' for i in range(n))}hstack={n},scale={min(2400, 240 * n)}:-1"
             if n > 1 else "scale=240:-1", f"{R}/build/sheet.jpg"])
         print(f"sheet: {R}/build/sheet.jpg")
+        print("Thai: zoom into one snap that has ้/่ with ำ or ั (e.g. น้ำ ซ้ำ ทั้ง) before sending the preview")
 
 
 # ---------------------------------------------------------------- render + delivery
@@ -179,9 +268,10 @@ def ebur(path):
     return float(I[-1]) if I else None, float(tp[-1]) if tp else None
 
 
-def render(R, out, speed=1.0, bed=None, bed_at=0.0, bed_from=0.0, bed_db=-16.0, do_render=True):
+def render(R, out, speed=1.0, bed=None, bed_at=0.0, bed_from=0.0, bed_db=-16.0, do_render=True, force=False):
     master = f"{R}/build/reel.mp4"
     if do_render:
+        thai_gate(R, force)
         sh([BASH, f"{GE}/scripts/hf.sh", "render", ".", "-o", "build/reel.mp4"], cwd=R)     # ~1.5 min for 28 s
     ins = ["-i", master]
     vf = f"setpts=PTS/{speed},fps=30" if speed != 1.0 else "fps=30"
@@ -221,7 +311,7 @@ def main():
     if cmd == "doctor":
         doctor("--fix" in rest)
     elif cmd == "prep":
-        prep(rest[0], rest[1], opt("--script"))
+        prep(rest[0], rest[1], opt("--script"), "--exact" in rest)
     elif cmd == "islands":
         islands(rest[0])
     elif cmd == "cut":
@@ -229,10 +319,12 @@ def main():
     elif cmd == "reel":
         reel(rest[0])
     elif cmd == "snap":
-        snap(rest[0], rest[1])
+        snap(rest[0], rest[1], "--force" in rest)
     elif cmd == "render":
         render(rest[0], rest[1], float(opt("--speed", 1.0)), opt("--bed"), float(opt("--bed-at", 0)), float(opt("--bed-from", 0)),
-               float(opt("--bed-db", -16)), "--no-render" not in rest)
+               float(opt("--bed-db", -16)), "--no-render" not in rest, "--force" in rest)
+    elif cmd == "thai":
+        sys.exit(1 if thai([x for x in rest if not x.startswith("--")], "--fix" in rest) else 0)
     else:
         sys.exit(f"unknown command {cmd}\n{__doc__}")
 

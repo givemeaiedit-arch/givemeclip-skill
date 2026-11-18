@@ -107,10 +107,12 @@ D:/venvs/whisper/Scripts/python.exe -m pip install torch --index-url https://dow
 ```
 
 ```bash
-D:/venvs/whisper/Scripts/python.exe -m pip install openai-whisper silero-vad==6.2.3 transformers opencv-python pillow numpy
+D:/venvs/whisper/Scripts/python.exe -m pip install openai-whisper faster-whisper silero-vad==6.2.3 transformers opencv-python pillow numpy
 ```
 
 เครื่องที่ไม่มีการ์ดจอ NVIDIA ให้ลง torch แบบปกติแทน (`pip install torch` ไม่ต้องใส่ `--index-url`) ใช้ได้ แต่ถอดเสียงช้ากว่า
+
+`faster-whisper` ใช้ถอดเสียงแบบ batched ที่เป็นค่าเริ่มต้น (เร็วกว่าแบบเดิมมาก) ถ้าลงไว้ใน python ตัวอื่น ให้ตั้ง `setx GMC_FW_PY "<path ของ python ตัวนั้น>"` ด้วย ถ้า `doctor` ขึ้น `ok` แต่ถอดเสียงแล้วฟ้องว่าหาไฟล์ cuBLAS/cuDNN ไม่เจอ ให้ลงเพิ่ม `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` ใน python ตัวเดียวกัน (ถ้าไม่ลง สคริปต์จะถอดด้วย CPU ให้เอง แต่ช้ากว่า)
 
 **ชุดที่ 2 สำหรับสแกนใบหน้า** (mediapipe)
 

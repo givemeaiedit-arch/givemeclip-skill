@@ -10,16 +10,22 @@ One raw recording + one script in, one finished vertical short out. Built on
 composition, SFX library) and the bundled `depth-parallax` skill (photo -> 2.5D camera move).
 
 `G=<skills>/givemeclip/scripts/gmc.py`; always run `PYTHONUTF8=1 python3 "$G" ...`. Paths come from environment
-variables (INSTALL.md): `GMC_GHOST_EDITOR`, `GMC_WHISPER_PY`, `GMC_MEDIAPIPE_PY`, `GMC_PARALLAX`.
+variables (INSTALL.md): `GMC_GHOST_EDITOR`, `GMC_WHISPER_PY`, `GMC_FW_PY` (faster-whisper; defaults to the whisper
+python), `GMC_MEDIAPIPE_PY`, `GMC_PARALLAX`.
 The project folder `P` must be an ASCII path (e.g. `D:/reels/<name>`): OpenCV cannot open Thai paths on Windows.
 
 ## Steps
 
-0. `gmc.py doctor --fix` — ghost-editor, the whisper python (+ silero-vad, CUDA), the mediapipe python,
-   depth-parallax, ffmpeg, bash, the SFX kit (restores files stuck as `*.wav.tmp.wav`), free disk (~15 GB).
+0. `gmc.py doctor --fix` — ghost-editor, the whisper python (+ silero-vad, CUDA), faster-whisper, the mediapipe
+   python, depth-parallax, ffmpeg, bash, the SFX kit (restores files stuck as `*.wav.tmp.wav`), free disk (~15 GB).
 1. `gmc.py prep <source.mp4> <P> --script <script.txt>` — links the source, makes a frame-exact proxy + voice wavs,
-   silero VAD speech islands, a Thai transcript per island (GPU) and a per-frame face scan in parallel, then prints
-   the island table. Long: start it in the background (5 min source: ~7.5 min proxy, ~17 min transcripts).
+   silero VAD speech islands, ONE batched faster-whisper pass over the whole file (`scripts/fw_batch.py`: large-v3,
+   GPU fp16, batch 16, word times -> `build/fw.json`; CPU int8 when there is no NVIDIA GPU), split back into the VAD
+   islands as `build/islands.json` (`"src": "fw"`, token pieces glued into whole syllables), and a per-frame face scan
+   in parallel, then prints the island table. Start it in the background (5 min source: ~7.5 min proxy).
+   Always use this batched transcript. `prep --exact` (openai-whisper, fp32, one pass per island: ~17 min for 97 s
+   of Thai) replaces it only when the user asks. Batched word times are coarser (a drawn-out word can land in the
+   next island); cut times still come from the audio (plan_cut trims by VAD), so check takes by ear / frame.
 2. Read the table (`gmc.py islands <P>`) against the script. Whisper Thai garbles words and loops (`นี่นี่นี่…`):
    use it for TIMES and to recognise the line, never as caption text. Pick the LAST fluent take of each line that
    looks at the lens (check a frame of each candidate).
@@ -56,6 +62,11 @@ The project folder `P` must be an ASCII path (e.g. `D:/reels/<name>`): OpenCV ca
 
 ## Thai text rendering — always
 Vowels and tone marks must never overlap (ซ้ำ, น้ำ, ทั้ง, ปั้น: the tone mark sits ABOVE ำ / ั, not on it).
+- EVERY time text goes into a clip, run the check: `gmc.py thai <file|dir> [--fix]` (`scripts/thai_check.py`).
+  It finds wrong typing order (ำ before the tone, tone before ั/ิ/ี/ุ…, doubled marks, a mark with no consonant) and
+  render methods that collide (drawtext, subtitles=, ass= without shaping=complex, PIL without RAQM, cv2.putText).
+  `gmc.py snap` and `gmc.py render` run it on P/reel automatically: order errors are fixed in place, anything else
+  stops the run (`--force` only if the user says so).
 - Burning ASS with ffmpeg: use `ass=file.ass:fontsdir=...:shaping=complex`. The plain `subtitles=` filter (and
   `shaping=simple`) skips Thai mark positioning and stacks ้ on top of ำ. Use complex for snapshots too.
 - ffmpeg `drawtext` has no Thai shaping: don't use it for Thai. PIL only with `layout_engine=ImageFont.Layout.RAQM`

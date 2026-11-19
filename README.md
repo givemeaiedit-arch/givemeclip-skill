@@ -1,17 +1,23 @@
 # GivemeClip
 
 สกิลสำหรับ [Claude Code](https://claude.com/claude-code) ใช้ตัดคลิปพูดหน้ากล้องภาษาไทย (มีเทคซ้ำ พูดผิด ช่วงเงียบ)
-ให้เป็นคลิปสั้นแนวตั้ง 9:16 ตามไฟล์สคริปต์ ได้ทั้งซับไทย กราฟิกเคลื่อนไหวตามคำพูด จอเล็กของต้นฉบับ แบ่งครึ่งจอ
-รูปเป็น 3D (2.5D) เพลงที่หลบใต้เสียงพูด เสียงเอฟเฟกต์ และไฟล์ส่งมอบที่ -14 LUFS พร้อมลง Reels / TikTok / Shorts
+ได้ทุกรูปแบบคลิป สกิลจะดูขนาดคลิปแล้วเลือกวิธีเอง
 
-A Claude Code skill that turns a raw Thai talking-head recording plus a script into a finished 9:16 short.
+- **คลิปสั้นแนวตั้ง 9:16** ตามไฟล์สคริปต์: ซับไทย กราฟิกเคลื่อนไหวตามคำพูด จอเล็กของต้นฉบับ แบ่งครึ่งจอ รูปเป็น 3D (2.5D)
+- **บทเรียน / อัดจอ / แนวนอน 16:9 ความยาวเต็ม**: ตัดช่วงเงียบ เร่งช่วงพิมพ์และช่วงรอพร้อมป้าย "เร่ง x" ซูมไปที่จุดที่สอน
+  กล้องเล็กกรอบสวย แถบขั้นตอน ซับไทย และการ์ด infographic ที่ขึ้นตามจังหวะพูด
+
+ทั้งสองแบบมีเพลงเบา ๆ ที่หลบใต้เสียงพูด เสียงพูดที่ปรับให้ชัด เสียงเอฟเฟกต์ และไฟล์ส่งมอบที่ -14 LUFS
+
+A Claude Code skill that turns a raw Thai recording into a finished clip: a 9:16 short from a talking-head take plus a
+script, or a full-length 16:9 lesson / screen recording with zooms, fast-forwards, captions and infographic cards.
 Built on [ghost-editor](https://github.com/kurbaitaev/ghost-editor) (MIT) and HyperFrames.
 
 ## ในนี้มีอะไร
 
 | โฟลเดอร์ | หน้าที่ |
 |---|---|
-| `givemeclip/` | สกิลหลัก: `SKILL.md`, `scripts/gmc.py` (คำสั่ง doctor / prep / islands / cut / reel / snap / render), แม่แบบฉาก `templates/reel_example.py` |
+| `givemeclip/` | สกิลหลัก: `SKILL.md`, `scripts/gmc.py` (คลิปสั้น: doctor / prep / islands / cut / reel / snap / render), `scripts/lesson.py` (บทเรียน: prep / cut / reel / bed), แม่แบบ `templates/reel_example.py` และ `templates/lesson_reel.py` |
 | `depth-parallax/` | สกิลทำรูปนิ่งเป็นภาพเคลื่อนไหวแบบ 2.5D (Depth Anything V2) |
 | `INSTALL.md` | คู่มือติดตั้งภาษาไทยทีละขั้น |
 
@@ -21,7 +27,8 @@ Built on [ghost-editor](https://github.com/kurbaitaev/ghost-editor) (MIT) and Hy
 
 ## ผลจากงานแรก (วัดจริง)
 
-ต้นฉบับ 5:01 นาที → คลิป 24.3 วิ · -14.0 LUFS · true peak -1.4 dBFS · เห็นหน้าคนพูด 81% · ภาพดำ/ภาพค้าง 0
+- คลิปสั้น: ต้นฉบับ 5:01 นาที → คลิป 24.3 วิ · -14.0 LUFS · true peak -1.4 dBFS · เห็นหน้าคนพูด 81% · ภาพดำ/ภาพค้าง 0
+- บทเรียน: ต้นฉบับ 5:12 → 2:51 นาที (-14.1 LUFS) และ 9:10 → 3:37 นาที (-13.6 LUFS) · ภาพดำ 0
 
 ทดสอบบน Windows 11 + RTX 4050 ส่วน macOS/Linux ยังไม่ได้ทดสอบ
 

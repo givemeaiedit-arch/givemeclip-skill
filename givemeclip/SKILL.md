@@ -1,9 +1,25 @@
 ---
 name: givemeclip
-description: "GivemeClip: cut a raw Thai talking-head recording (retakes, flubs, dead air) into a professional vertical 9:16 short (15-60 s) that follows a script file (สคิป.txt / สคริปต์), with Thai captions, motion graphics on the spoken lines, PiP of the original, split screen, 2.5D '3D' photos, SFX, a music bed ducked under the voice, speed-up and -14 LUFS delivery. Use when the user says GivemeClip, ตัดคลิป, 'ตัดคลิปจากไฟล์ดิบ', hands over a raw .mp4/.MOV plus a script, or asks to re-cut/fix one of these clips. Builds on the ghost-editor and depth-parallax skills; tested on Windows."
+description: "GivemeClip: edit a raw Thai recording of ANY shape into a professional clip: (1) a vertical 9:16 short (15-60 s) from a talking-head take plus a script (retakes, flubs, dead air cut, Thai captions, motion graphics on the spoken lines, PiP of the original, split screen, 2.5D '3D' photos), or (2) a full-length lesson / tutorial / screen recording at the source's own size (16:9): dead air cut, silent typing and waiting fast-forwarded with an 'x N' badge, zoom onto what is being taught or typed, the webcam re-drawn as a PiP, a step bar, Thai captions and infographic cards. Both with SFX, a quiet music bed ducked under a cleaned-up voice, speed-up and -14 LUFS delivery. Use when the user says GivemeClip, ตัดคลิป, ตัดต่อคลิปนี้, ตัดต่อบทเรียน, 'ตัดคลิปจากไฟล์ดิบ', hands over a raw .mp4/.MOV/.mkv (vertical, horizontal or square, with or without a script), or asks to re-cut/fix one of these clips. Builds on the ghost-editor and depth-parallax skills; tested on Windows."
 ---
 
 # GivemeClip
+
+## First: pick the pipeline by the source shape and the job
+
+`ffprobe` the source (size, length) and look at a contact sheet before anything else:
+
+| Source | Job | Pipeline |
+|---|---|---|
+| 9:16 vertical talking head (+ script) | short 15-60 s | **Short** (`gmc.py`, steps below) |
+| 16:9 talking head | short for Reels/TikTok | **Short** (not yet tried on a 16:9 source: the plate is drawn `object-fit: cover` in 1080x1920, check the face crop in the first snapshot) |
+| lesson, tutorial, screen recording (+ webcam box), any length | the whole lesson, tighter | **Lesson** (`lesson.py`, section below) |
+| square / 4:5 / other | either | Lesson keeps the source size (move the cards: their pixels assume 1920x1080) |
+
+When the shape does not settle it (a 5-minute 16:9 lesson could be a full lesson or a short), ask the user once:
+"16:9 full lesson / 9:16 short 30-60 s / both". Don't guess.
+
+## Short (9:16)
 
 One raw recording + one script in, one finished vertical short out. Built on
 [ghost-editor](https://github.com/kurbaitaev/ghost-editor) (MIT: take selection, frame-exact cuts, HyperFrames
@@ -14,7 +30,7 @@ variables (INSTALL.md): `GMC_GHOST_EDITOR`, `GMC_WHISPER_PY`, `GMC_FW_PY` (faste
 python), `GMC_MEDIAPIPE_PY`, `GMC_PARALLAX`.
 The project folder `P` must be an ASCII path (e.g. `D:/reels/<name>`): OpenCV cannot open Thai paths on Windows.
 
-## Steps
+### Steps
 
 0. `gmc.py doctor --fix` — ghost-editor, the whisper python (+ silero-vad, CUDA), faster-whisper, the mediapipe
    python, depth-parallax, ffmpeg, bash, the SFX kit (restores files stuck as `*.wav.tmp.wav`), free disk (~15 GB).
@@ -52,6 +68,42 @@ The project folder `P` must be an ASCII path (e.g. `D:/reels/<name>`): OpenCV ca
 
 3D from a photo (2.5D, not a 360° model: say so):
 `<whisper python> <skills>/depth-parallax/scripts/parallax.py in.png out.mp4 --motion orbit --duration 2.6 --size 1080x830 --strength 1.4`
+
+## Lesson (any shape, full length): lesson.py
+
+Proven on two course chapters (5:12 -> 2:51 and 9:10 -> 3:37): talking head, then a screen recording of the Claude
+app with a webcam box. `L=<skills>/givemeclip/scripts/lesson.py`, always `PYTHONUTF8=1 python "$L" ...`
+(same environment variables as gmc.py, plus optional `GMC_FONTS` = a folder with Kanit-*.ttf from Google Fonts).
+
+1. `lesson.py prep <source> <P>` (background; ~2 min per 5 min of source on a GPU): audio, silero VAD, batched Thai
+   transcript, contact sheets `build/s*.jpg` (every 5 s, timestamped), `build/words.txt` (time | text | gaps).
+2. Read the sheets and the words. Mark the talking-head part(s), the screen part(s), OBS scene switches / black frames,
+   lines said twice (keep the last), long waits (an AI working, a render), demos that must play at 1x.
+   `lesson.py frames <P> 48,56,71` writes full-res frames: read the pixel boxes of what to zoom on (dialogs, the input
+   box, the reply, file grids) and of the webcam overlay.
+3. `<P>/lesson.json` (`lesson.py -h`): segments `head` / `screen`, `drop`, `keep_1x`, `wait`. `lesson.py cut <P> --dry`,
+   check the length and the jumps, then `lesson.py cut <P>` (background, ~0.4x real time).
+   Rules: head = jump cuts on speech (punch-in 1.0 / 1.13 alternating); screen = never cut the picture, silent gaps
+   >= 1 s fast-forwarded to 0.35 + 0.11 x gap seconds (max 1.5 s; > 60 s gaps 3 s), one `wait` block for a long wait
+   (x50 down to 4 s, with a live clock card), demos at 1x.
+4. `lesson.py reel <P>` -> `<P>/reel`: plate, voice (EQ + denoise + compressor; fast-forward audio at 0.25), fonts,
+   an SFX kit, `reel.py` from `templates/lesson_reel.py`. Rewrite its CAP / FACE / CAM / CAMBOX / STEPS and the scene
+   blocks:
+   - captions: your own corrected Thai (whisper garbles names: Claude -> คอร์ดโค้ด / cross code), keywords in `<b>`
+     (orange); no captions while a finished clip with its own text plays.
+   - a zoom keyframe on everything taught, typed or clicked; the PiP moves top-right when zoomed, home when wide.
+   - cards appear item by item on the spoken word: opening "บทที่ N" + recap, "this lesson", content cards (the
+     typed prompt as a recipe, what goes in the folder, diagrams), freebies under the clip, end card "next lesson".
+   - a card never covers the zoom target, the PiP or the caption band: check every snapshot.
+   - `PYTHONUTF8=1 python reel.py`
+5. `gmc.py snap <P>/reel t1,t2,...` (~20 beats) — look at every one, fix, re-snap the fixed beats.
+6. `lesson.py bed <P> --track digital-clouds [--mute a-b] --speed 1.1` (`--mute` = raw seconds of a demo that has its
+   own music), then `gmc.py render <P>/reel "<source folder>/<name> (final).mp4" --speed 1.1 --bed <P>/build/bed.wav
+   --bed-db -32`. Put the final next to the source. Targets: -14 +/- 1 LUFS, true peak <= -1 dBFS, black 0. A still
+   screen while someone talks trips the frozen-frame check: confirm the PiP moves instead of trusting the flag.
+
+House taste: music very quiet (-32 dB), voice loud and clear, about 10 SFX per clip (title hit, head -> screen whoosh,
+soft step dings, send, freebie, one confirm). `QUIET` in reel.py drops the rest.
 
 ## Windows fixes built into gmc.py
 - Thai json written as cp874 by child scripts: gmc sets `PYTHONUTF8=1` everywhere and repairs islands.json.
